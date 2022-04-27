@@ -1,0 +1,116 @@
+---
+title: "Seattle_Dorling_Cartogram"
+author: "Jacob Hendershot"
+date: '2022-04-27'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+# Packages
+
+library( geojsonio )   # read shapefiles
+library( sp )          # work with shapefiles
+library( dplyr )       # data wrangling 
+library( pander )      # formatting RMD tables
+library( tidycensus )
+library( tigris )
+library( cartogram )  # spatial maps w/ tract size bias reduction
+library( maptools )   # spatial object manipulation 
+library( sf )         # 'simple features' flavor of shapefiles
+library( tmap )       # thematic maps
+
+
+```
+
+
+```{r}
+
+# load your census API key:
+census_api_key("0f84a9266b599909ab9d3e9d41fdc3dd2fd2d82e", overwrite = T, install = T)
+
+```
+
+```{r}
+
+sea.pop <-
+get_acs( geography = "tract", variables = "B01003_001",
+         state = "WA", county = "King", geometry = FALSE ) %>% 
+         select( GEOID, estimate ) %>%
+         rename( POP=estimate )
+
+sea.mhhi <- 
+  get_acs( geography = "tract", variables = "B19013_001",
+           state = "WA", county = "King", geometry = FALSE ) %>% 
+  select( GEOID, estimate ) %>% 
+  rename( MHHI=estimate )
+
+
+
+sea <- tracts( state="WA", county="King", cb=TRUE, year=2015 )
+
+```
+
+
+
+
+```{r}
+
+sea <- merge( sea, sea.pop, by.x="GEOID", by.y="GEOID" )
+sea <- merge( sea, sea.mhhi, by.x="GEOID", by.y="GEOID" )
+
+sea <- as_Spatial( sea )
+
+class(sea)
+
+head( sea@data ) %>% pander()
+
+```
+
+```{r}
+
+plot(sea)
+
+```
+
+
+```{r}
+
+library( rgdal )
+
+# project map and remove empty tracts
+sea <- spTransform( sea, CRS("+init=epsg:6597
+                             "))
+sea <- sea[ sea$POP != 0 & (! is.na( sea$POP )) , ]
+
+# devtools::install_github( "sjewo/cartogram" )
+
+# convert census tract polygons to dorling cartogram
+# no idea why k=0.03 works, but it does - default is k=5
+sea$pop.w <- sea$POP / 10000   # standardizes it to max of 1.5
+sea_dorling <- cartogram_dorling( x=sea, weight="pop.w", k=0.03 )
+
+plot( sea_dorling )
+
+```
+
+```{r}
+
+tm_shape( sea_dorling ) + 
+  tm_polygons( size="POP", col="MHHI", n=7, style="quantile", palette="Spectral" ) 
+
+```
+
+```{r}
+
+# WRITE TO FILE 
+
+sea_dorling <- spTransform( sea_dorling, CRS("+proj=longlat +datum=WGS84") )
+geojson_write( sea_dorling, file="sea_dorling.geojson", geometry="polygon" )
+
+```
